@@ -1,5 +1,8 @@
 
+import os
+import shutil
 import tkinter as tk
+from datetime import datetime
 from tkinter import filedialog, messagebox
 import requests
 import threading
@@ -54,8 +57,13 @@ class StreamManagerApp:
         if not self.file_path:
             return
         
-        with open(self.file_path, 'r') as f:
-            lines = f.readlines()
+        try:
+            with open(self.file_path, 'r') as f:
+                lines = f.readlines()
+        except OSError as exc:
+            messagebox.showerror("File Error", f"Could not read file:\n{exc}")
+            self.file_path = ""
+            return
 
         self.streams = []
         for line in lines:
@@ -222,22 +230,52 @@ class StreamManagerApp:
                 messagebox.showerror("Invalid Stream", f"Error in stream {i}: {error}")
                 return
 
-        save_path = filedialog.asksaveasfilename(defaultextension=".sii", filetypes=[("SII Files", "*.sii")])
+        save_dialog_options = {"defaultextension": ".sii", "filetypes": [("SII Files", "*.sii")]}  # Default options
+
+        if self.file_path:
+            save_dialog_options["initialdir"] = os.path.dirname(self.file_path)
+            save_dialog_options["initialfile"] = os.path.basename(self.file_path)
+
+        save_path = filedialog.asksaveasfilename(**save_dialog_options)
         if not save_path:
             return
 
-        with open(save_path, 'w') as f:
-            # Write the header and update the stream_data count
-            f.write('SiiNunit\n{\n')
-            f.write(f'live_stream_def : _nameless.23f.d60f.8a20 {{\n stream_data: {len(self.streams)}\n')
+        save_path = os.path.abspath(save_path)
 
-            # Write the actual stream data
-            for i, stream in enumerate(self.streams):
-                f.write(f'stream_data[{i}]: "{stream["url"]}|{stream["name"]}|{stream["genre"]}|{stream["language"]}|{stream["bitrate"]}|{stream["extra"]}"\n')
-            
-            f.write('}\n')
-            f.write('}\n')
+        if os.path.exists(save_path):
+            overwrite = messagebox.askyesno("Overwrite File?", f"{save_path} already exists. Do you want to overwrite it?")
+            if not overwrite:
+                return
 
+            create_backup = messagebox.askyesno(
+                "Create Backup?",
+                "Do you want to create a timestamped backup of the existing file before overwriting?",
+            )
+            if create_backup:
+                backup_path = f"{save_path}.{datetime.now().strftime('%Y%m%d_%H%M%S')}.bak"
+                try:
+                    shutil.copy2(save_path, backup_path)
+                except OSError as exc:
+                    messagebox.showerror("Backup Error", f"Could not create backup file:\n{exc}")
+                    return
+
+        try:
+            with open(save_path, 'w') as f:
+                # Write the header and update the stream_data count
+                f.write('SiiNunit\n{\n')
+                f.write(f'live_stream_def : _nameless.23f.d60f.8a20 {{\n stream_data: {len(self.streams)}\n')
+
+                # Write the actual stream data
+                for i, stream in enumerate(self.streams):
+                    f.write(f'stream_data[{i}]: "{stream["url"]}|{stream["name"]}|{stream["genre"]}|{stream["language"]}|{stream["bitrate"]}|{stream["extra"]}"\n')
+
+                f.write('}\n')
+                f.write('}\n')
+        except OSError as exc:
+            messagebox.showerror("Save Error", f"Could not save file:\n{exc}")
+            return
+
+        self.file_path = save_path
         messagebox.showinfo("Save Successful", "Streams have been saved successfully.")
 
 if __name__ == "__main__":
