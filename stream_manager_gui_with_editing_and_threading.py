@@ -226,8 +226,16 @@ class StreamManagerApp:
     def check_stream(self, url):
         '''Check if the stream URL is functional'''
         try:
-            response = requests.get(url, timeout=10)
-            return response.status_code == 200
+            with requests.get(url, timeout=(5, 5), stream=True) as response:
+                if response.status_code != 200:
+                    return False
+
+                try:
+                    next(response.iter_content(chunk_size=1024))
+                except StopIteration:
+                    return False
+
+                return True
         except requests.exceptions.RequestException:
             return False
 
@@ -399,13 +407,19 @@ class StreamManagerApp:
         threading.Thread(target=self.test_all_thread, daemon=True).start()
 
     def test_all_thread(self):
-        for idx, stream in enumerate(self.streams):
-            is_working = self.check_stream(stream['url'])
-            status_text = "Working" if is_working else "Not Responding"
-            self.statuses[idx] = status_text
-            self.root.after(0, lambda i=idx, status=status_text: self.update_status(i, status))
-            self.root.after(0, lambda val=idx + 1: self.progress.config(value=val))
-        self.root.after(0, self.finish_testing)
+        try:
+            for idx, stream in enumerate(self.streams):
+                try:
+                    is_working = self.check_stream(stream['url'])
+                except Exception:
+                    is_working = False
+
+                status_text = "Working" if is_working else "Not Responding"
+                self.statuses[idx] = status_text
+                self.root.after(0, lambda i=idx, status=status_text: self.update_status(i, status))
+                self.root.after(0, lambda val=idx + 1: self.progress.config(value=val))
+        finally:
+            self.root.after(0, self.finish_testing)
 
     def update_status(self, index, status):
         '''Update status label and treeview row'''
