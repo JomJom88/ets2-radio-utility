@@ -73,13 +73,18 @@ class StreamManagerApp:
 
         index = selected[0]
         url = self.streams[index]['url']
-        
+
         # Use threading to avoid blocking the UI
-        threading.Thread(target=self.check_stream_thread, args=(url,)).start()
+        threading.Thread(target=self.check_stream_thread, args=(url,), daemon=True).start()
 
     def check_stream_thread(self, url):
         '''Threaded function to check if the stream URL is functional'''
-        if self.check_stream(url):
+        is_working = self.check_stream(url)
+        self.root.after(0, lambda: self.show_stream_check_result(is_working))
+
+    def show_stream_check_result(self, is_working):
+        '''Display the result of a stream check on the main UI thread.'''
+        if is_working:
             messagebox.showinfo("Stream Check", "The stream is working!")
         else:
             messagebox.showwarning("Stream Check", "The stream is not responding.")
