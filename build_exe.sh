@@ -7,5 +7,7 @@ python3 -m PyInstaller \
   --onefile \
   --name stream_manager_gui_with_editing_and_threading \
   --hidden-import=requests \
+  --hidden-import=vlc \
   --collect-submodules requests \
+  --collect-submodules vlc \
   stream_manager_gui_with_editing_and_threading.py
