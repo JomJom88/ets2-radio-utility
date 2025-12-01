@@ -8,9 +8,12 @@ This repository contains a GUI utility for managing Euro Truck Simulator 2 radio
 - Build dependencies installed in a virtual environment or the system interpreter:
   ```bash
   python3 -m pip install --upgrade pip
-  python3 -m pip install pyinstaller requests
+  python3 -m pip install pyinstaller requests python-vlc
   ```
 - On Windows, install the Microsoft Visual C++ Redistributable if prompted when running the built executable.
+- Install a VLC runtime on the target machine so audio playback works:
+  - **Windows/macOS:** install the latest VLC media player from [videolan.org](https://www.videolan.org/).
+  - **Linux:** install VLC with your package manager (e.g., `sudo apt install vlc`).
 
 ## Build the executable
 Run the build script from the repository root:
@@ -19,11 +22,17 @@ Run the build script from the repository root:
 ```
 The script calls:
 ```bash
-python3 -m PyInstaller --noconsole --onefile --name stream_manager_gui_with_editing_and_threading --hidden-import=requests --collect-submodules requests stream_manager_gui_with_editing_and_threading.py
+python3 -m PyInstaller --noconsole --onefile --name stream_manager_gui_with_editing_and_threading --hidden-import=requests --hidden-import=vlc --collect-submodules requests --collect-submodules vlc stream_manager_gui_with_editing_and_threading.py
 ```
 Notes:
 - `--hidden-import=requests` and `--collect-submodules requests` ensure that `requests` and its transitive modules are bundled into the executable.
+- `--hidden-import=vlc` and `--collect-submodules vlc` bundle the VLC bindings (`python-vlc`) so the packaged app can play streams.
 - The resulting binary is written to `dist/stream_manager_gui_with_editing_and_threading` (with `.exe` on Windows).
+
+## Playing streams from the GUI
+- Use the **Play** button to start audio playback for the selected stream; **Stop** halts playback and releases the player.
+- A status indicator shows when playback is active (e.g., "Playing" or "Stopped").
+- VLC must be installed on the host system (see prerequisites) because the app relies on the VLC runtime to decode streams.
 
 ## Running the executable
 - Windows: double-click `stream_manager_gui_with_editing_and_threading.exe` or launch it from PowerShell/CMD without needing Python installed.
