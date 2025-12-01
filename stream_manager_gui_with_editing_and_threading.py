@@ -226,8 +226,16 @@ class StreamManagerApp:
     def check_stream(self, url):
         '''Check if the stream URL is functional'''
         try:
-            response = requests.get(url, timeout=(5, 5))
-            return response.status_code == 200
+            with requests.get(url, timeout=(5, 5), stream=True) as response:
+                if response.status_code != 200:
+                    return False
+
+                try:
+                    next(response.iter_content(chunk_size=1024))
+                except StopIteration:
+                    return False
+
+                return True
         except requests.exceptions.RequestException:
             return False
 
