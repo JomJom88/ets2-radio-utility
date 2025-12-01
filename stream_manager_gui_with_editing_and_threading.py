@@ -7,6 +7,7 @@ from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 import requests
 import threading
+import vlc
 from urllib.parse import urlparse
 
 class StreamManagerApp:
@@ -20,6 +21,11 @@ class StreamManagerApp:
         self.sort_reverse = False
         self.is_testing_all = False
         self.settings_path = os.path.join(os.path.expanduser("~"), ".ets2_radio_utility_config.json")
+        self.vlc_instance = None
+        self.player = None
+        self.playback_thread = None
+        self.currently_playing_index = None
+        self.playback_generation = 0
 
         self.load_settings()
 
@@ -72,6 +78,8 @@ class StreamManagerApp:
         button_frame.pack(fill=tk.X, pady=5)
 
         tk.Button(button_frame, text="Check Stream", command=self.check_selected_stream).pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="Play", command=self.play_selected_stream).pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="Stop", command=self.stop_playback).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="Test All", command=self.test_all_streams).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="Add New Stream", command=self.add_stream).pack(side=tk.LEFT, padx=5)
         tk.Button(button_frame, text="Edit Selected Stream", command=self.edit_stream).pack(side=tk.LEFT, padx=5)
@@ -83,6 +91,89 @@ class StreamManagerApp:
         self.progress.pack(fill=tk.X, expand=True)
         self.status_label = tk.Label(progress_frame, text="Ready")
         self.status_label.pack(anchor="w", pady=2)
+
+    def play_selected_stream(self):
+        '''Start playback for the selected stream using VLC'''
+        selected = self.tree.selection()
+        if not selected:
+            messagebox.showwarning("No Selection", "Please select a stream to play.")
+            return
+
+        index = int(selected[0])
+        url = self.streams[index]['url']
+
+        if not url.strip():
+            messagebox.showwarning("Missing URL", "The selected stream does not have a URL to play.")
+            return
+
+        # Stop any existing playback before starting a new stream
+        self.stop_playback()
+        self.playback_generation += 1
+        generation = self.playback_generation
+        self.status_label.config(text="Starting playback...")
+
+        self.playback_thread = threading.Thread(
+            target=self._start_playback, args=(index, url, generation), daemon=True
+        )
+        self.playback_thread.start()
+
+    def _start_playback(self, index, url, generation):
+        try:
+            instance = vlc.Instance()
+            player = instance.media_player_new()
+            media = instance.media_new(url)
+            player.set_media(media)
+            player.play()
+        except Exception as exc:
+            self.root.after(0, lambda: messagebox.showerror("Playback Error", f"Could not start playback:\n{exc}"))
+            return
+
+        def update_state():
+            if generation != self.playback_generation:
+                try:
+                    player.stop()
+                except Exception:
+                    pass
+                try:
+                    instance.release()
+                except Exception:
+                    pass
+                return
+
+            self.vlc_instance = instance
+            self.player = player
+            self.currently_playing_index = index
+            self.statuses[index] = "Playing"
+            self.status_label.config(text=f"Playing: {self.streams[index]['name']}")
+            self.update_treeview()
+
+        self.root.after(0, update_state)
+
+    def stop_playback(self, update_status=True, increment_generation=True):
+        '''Stop current playback and release VLC resources'''
+        if increment_generation:
+            self.playback_generation += 1
+
+        if self.player:
+            try:
+                self.player.stop()
+            except Exception:
+                pass
+        if self.vlc_instance:
+            try:
+                self.vlc_instance.release()
+            except Exception:
+                pass
+
+        if update_status and self.currently_playing_index is not None:
+            self.statuses[self.currently_playing_index] = "Stopped"
+        self.currently_playing_index = None
+        self.player = None
+        self.vlc_instance = None
+
+        if update_status:
+            self.status_label.config(text="Playback stopped")
+            self.update_treeview()
 
     def is_valid_url(self, url):
         '''Basic validation to check if a URL looks valid.'''
@@ -456,6 +547,7 @@ class StreamManagerApp:
             pass
 
     def on_close(self):
+        self.stop_playback()
         self.save_settings()
         self.root.destroy()
 
