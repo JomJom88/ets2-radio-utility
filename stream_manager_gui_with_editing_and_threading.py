@@ -8,6 +8,7 @@ from datetime import datetime
 from tkinter import filedialog, messagebox, ttk
 import requests
 import threading
+import vlc
 from urllib.parse import urlparse
 
 class StreamManagerApp:
