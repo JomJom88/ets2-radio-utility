@@ -3,6 +3,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import requests
 import threading
+from urllib.parse import urlparse
 
 class StreamManagerApp:
     def __init__(self, root):
@@ -25,6 +26,27 @@ class StreamManagerApp:
         tk.Button(self.root, text="Edit Selected Stream", command=self.edit_stream).pack(pady=5)  # New button to edit stream
         tk.Button(self.root, text="Delete Selected Stream", command=self.delete_stream).pack(pady=5)
         tk.Button(self.root, text="Save Changes", command=self.save_file).pack(pady=10)
+
+    def is_valid_url(self, url):
+        '''Basic validation to check if a URL looks valid.'''
+        parsed = urlparse(url)
+        return parsed.scheme in ("http", "https") and bool(parsed.netloc)
+
+    def validate_stream(self, stream):
+        '''Validate a stream's required fields and format.'''
+        if not stream['url'].strip():
+            return "Stream URL is required."
+        if not self.is_valid_url(stream['url'].strip()):
+            return "Stream URL is not valid."
+        if not stream['name'].strip():
+            return "Stream name is required."
+        if not str(stream['bitrate']).strip():
+            return "Bitrate is required."
+        try:
+            int(stream['bitrate'])
+        except ValueError:
+            return "Bitrate must be a number."
+        return None
 
     def load_file(self):
         '''Load .sii file and display streams in the listbox'''
@@ -163,6 +185,10 @@ class StreamManagerApp:
                 'bitrate': bitrate_entry.get(),
                 'extra': extra_entry.get()
             }
+            error = self.validate_stream(new_stream)
+            if error:
+                messagebox.showerror("Invalid Input", error)
+                return
             if index is not None:
                 self.streams[index] = new_stream  # Update existing stream
             else:
@@ -189,7 +215,13 @@ class StreamManagerApp:
         if not self.streams:
             messagebox.showwarning("No Data", "No streams to save.")
             return
-        
+
+        for i, stream in enumerate(self.streams, start=1):
+            error = self.validate_stream(stream)
+            if error:
+                messagebox.showerror("Invalid Stream", f"Error in stream {i}: {error}")
+                return
+
         save_path = filedialog.asksaveasfilename(defaultextension=".sii", filetypes=[("SII Files", "*.sii")])
         if not save_path:
             return
