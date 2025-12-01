@@ -1,4 +1,5 @@
 
+import importlib
 import json
 import os
 import shutil
@@ -21,6 +22,7 @@ class StreamManagerApp:
         self.sort_reverse = False
         self.is_testing_all = False
         self.settings_path = os.path.join(os.path.expanduser("~"), ".ets2_radio_utility_config.json")
+        self.vlc_module = None
         self.vlc_instance = None
         self.player = None
         self.playback_thread = None
@@ -92,6 +94,32 @@ class StreamManagerApp:
         self.status_label = tk.Label(progress_frame, text="Ready")
         self.status_label.pack(anchor="w", pady=2)
 
+    def ensure_vlc_available(self):
+        """Load python-vlc dynamically and alert the user if it's missing."""
+        if self.vlc_module:
+            return True
+
+        spec = importlib.util.find_spec("vlc")
+        if spec is None:
+            messagebox.showerror(
+                "VLC Not Installed",
+                "python-vlc is required for playback. Please install VLC and the python-vlc package, then try again.",
+            )
+            return False
+
+        loader = spec.loader
+        if loader is None:
+            messagebox.showerror(
+                "VLC Not Installed",
+                "python-vlc is required for playback. Please install VLC and the python-vlc package, then try again.",
+            )
+            return False
+
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        self.vlc_module = module
+        return True
+
     def play_selected_stream(self):
         '''Start playback for the selected stream using VLC'''
         selected = self.tree.selection()
@@ -104,6 +132,9 @@ class StreamManagerApp:
 
         if not url.strip():
             messagebox.showwarning("Missing URL", "The selected stream does not have a URL to play.")
+            return
+
+        if not self.ensure_vlc_available():
             return
 
         # Stop any existing playback before starting a new stream
@@ -119,7 +150,7 @@ class StreamManagerApp:
 
     def _start_playback(self, index, url, generation):
         try:
-            instance = vlc.Instance()
+            instance = self.vlc_module.Instance()
             player = instance.media_player_new()
             media = instance.media_new(url)
             player.set_media(media)
