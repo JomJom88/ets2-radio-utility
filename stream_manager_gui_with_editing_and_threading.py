@@ -116,7 +116,16 @@ class StreamManagerApp:
             return False
 
         module = importlib.util.module_from_spec(spec)
-        loader.exec_module(module)
+        try:
+            loader.exec_module(module)
+        except Exception as exc:
+            messagebox.showerror(
+                "VLC Not Installed",
+                "python-vlc is required for playback. Please install VLC and the python-vlc package, then try again.\n"
+                f"Details: {exc}",
+            )
+            return False
+
         self.vlc_module = module
         return True
 
