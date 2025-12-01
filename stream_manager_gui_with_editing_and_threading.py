@@ -1,9 +1,10 @@
 
+import json
 import os
 import shutil
 import tkinter as tk
 from datetime import datetime
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
 import requests
 import threading
 from urllib.parse import urlparse
@@ -14,21 +15,74 @@ class StreamManagerApp:
         self.root.title("Stream Manager")
         self.streams = []
         self.file_path = ""
+        self.statuses = {}
+        self.sort_by = None
+        self.sort_reverse = False
+        self.is_testing_all = False
+        self.settings_path = os.path.join(os.path.expanduser("~"), ".ets2_radio_utility_config.json")
+
+        self.load_settings()
 
         # Create GUI elements
         self.create_widgets()
 
+        self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
     def create_widgets(self):
         '''Setup the layout and widgets'''
-        tk.Button(self.root, text="Load .sii File", command=self.load_file).pack(pady=10)
-        self.listbox = tk.Listbox(self.root, width=100, height=10)
-        self.listbox.pack(pady=10)
+        top_frame = tk.Frame(self.root)
+        top_frame.pack(fill=tk.X, pady=5)
 
-        tk.Button(self.root, text="Check Stream", command=self.check_selected_stream).pack(pady=5)
-        tk.Button(self.root, text="Add New Stream", command=self.add_stream).pack(pady=5)
-        tk.Button(self.root, text="Edit Selected Stream", command=self.edit_stream).pack(pady=5)  # New button to edit stream
-        tk.Button(self.root, text="Delete Selected Stream", command=self.delete_stream).pack(pady=5)
-        tk.Button(self.root, text="Save Changes", command=self.save_file).pack(pady=10)
+        tk.Button(top_frame, text="Load .sii File", command=self.load_file).pack(side=tk.LEFT, padx=5)
+        tk.Button(top_frame, text="Save Changes", command=self.save_file).pack(side=tk.LEFT, padx=5)
+
+        filter_frame = tk.LabelFrame(self.root, text="Filter Streams")
+        filter_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        self.name_filter = tk.StringVar()
+        self.genre_filter = tk.StringVar()
+        self.language_filter = tk.StringVar()
+
+        tk.Label(filter_frame, text="Name:").grid(row=0, column=0, padx=5, pady=2, sticky="e")
+        tk.Entry(filter_frame, textvariable=self.name_filter, width=20).grid(row=0, column=1, padx=5, pady=2)
+        tk.Label(filter_frame, text="Genre:").grid(row=0, column=2, padx=5, pady=2, sticky="e")
+        tk.Entry(filter_frame, textvariable=self.genre_filter, width=20).grid(row=0, column=3, padx=5, pady=2)
+        tk.Label(filter_frame, text="Language:").grid(row=0, column=4, padx=5, pady=2, sticky="e")
+        tk.Entry(filter_frame, textvariable=self.language_filter, width=20).grid(row=0, column=5, padx=5, pady=2)
+        tk.Button(filter_frame, text="Apply", command=self.update_treeview).grid(row=0, column=6, padx=5, pady=2)
+
+        tree_frame = tk.Frame(self.root)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+
+        columns = ("name", "url", "genre", "language", "bitrate", "extra", "status")
+        self.tree = ttk.Treeview(tree_frame, columns=columns, show="headings", selectmode="browse")
+        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        for col in columns:
+            self.tree.heading(col, text=col.title(), command=lambda c=col: self.sort_by_column(c))
+            self.tree.column(col, width=120, anchor="w")
+        self.tree.column("url", width=220)
+        self.tree.column("status", width=120)
+
+        scrollbar = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
+        self.tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        button_frame = tk.Frame(self.root)
+        button_frame.pack(fill=tk.X, pady=5)
+
+        tk.Button(button_frame, text="Check Stream", command=self.check_selected_stream).pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="Test All", command=self.test_all_streams).pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="Add New Stream", command=self.add_stream).pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="Edit Selected Stream", command=self.edit_stream).pack(side=tk.LEFT, padx=5)
+        tk.Button(button_frame, text="Delete Selected Stream", command=self.delete_stream).pack(side=tk.LEFT, padx=5)
+
+        progress_frame = tk.Frame(self.root)
+        progress_frame.pack(fill=tk.X, padx=5, pady=5)
+        self.progress = ttk.Progressbar(progress_frame, mode="determinate")
+        self.progress.pack(fill=tk.X, expand=True)
+        self.status_label = tk.Label(progress_frame, text="Ready")
+        self.status_label.pack(anchor="w", pady=2)
 
     def is_valid_url(self, url):
         '''Basic validation to check if a URL looks valid.'''
@@ -53,7 +107,11 @@ class StreamManagerApp:
 
     def load_file(self):
         '''Load .sii file and display streams in the listbox'''
-        self.file_path = filedialog.askopenfilename(filetypes=[("SII Files", "*.sii")])
+        initial_dir = os.path.dirname(self.file_path) if self.file_path else None
+        dialog_options = {"filetypes": [("SII Files", "*.sii")]}
+        if initial_dir:
+            dialog_options["initialdir"] = initial_dir
+        self.file_path = filedialog.askopenfilename(**dialog_options)
         if not self.file_path:
             return
         
@@ -85,35 +143,81 @@ class StreamManagerApp:
                 except IndexError:
                     print(f"Error parsing line: {line}")
         
-        self.update_listbox()
+        self.statuses = {}
+        self.update_treeview()
+        self.save_settings()
 
-    def update_listbox(self):
-        '''Refresh the listbox with the current streams'''
-        self.listbox.delete(0, tk.END)
-        for i, stream in enumerate(self.streams):
-            # Show stream name, URL, and genre
-            self.listbox.insert(tk.END, f"{i+1}. {stream['name']} - {stream['url']} [{stream['genre']}]")
+    def filtered_streams(self):
+        '''Apply filters to streams'''
+        name_filter = self.name_filter.get().lower()
+        genre_filter = self.genre_filter.get().lower()
+        language_filter = self.language_filter.get().lower()
+
+        results = []
+        for idx, stream in enumerate(self.streams):
+            if name_filter and name_filter not in stream['name'].lower():
+                continue
+            if genre_filter and genre_filter not in stream['genre'].lower():
+                continue
+            if language_filter and language_filter not in stream['language'].lower():
+                continue
+            results.append((idx, stream))
+        return results
+
+    def sort_by_column(self, column):
+        '''Toggle sorting for a column'''
+        if self.sort_by == column:
+            self.sort_reverse = not self.sort_reverse
+        else:
+            self.sort_by = column
+            self.sort_reverse = False
+        self.update_treeview()
+
+    def update_treeview(self):
+        '''Refresh the treeview with the current streams'''
+        for item in self.tree.get_children():
+            self.tree.delete(item)
+
+        streams = self.filtered_streams()
+        if self.sort_by:
+            key_func = lambda s: s[1].get(self.sort_by, "").lower()
+            streams.sort(key=key_func, reverse=self.sort_reverse)
+
+        for idx, stream in streams:
+            status_text = self.statuses.get(idx, "")
+            values = (
+                stream['name'],
+                stream['url'],
+                stream['genre'],
+                stream['language'],
+                stream['bitrate'],
+                stream['extra'],
+                status_text,
+            )
+            self.tree.insert("", tk.END, iid=str(idx), values=values)
 
     def check_selected_stream(self):
         '''Check if the selected stream URL is functional'''
-        selected = self.listbox.curselection()
+        selected = self.tree.selection()
         if not selected:
             messagebox.showwarning("No Selection", "Please select a stream to check.")
             return
 
-        index = selected[0]
+        index = int(selected[0])
         url = self.streams[index]['url']
 
         # Use threading to avoid blocking the UI
-        threading.Thread(target=self.check_stream_thread, args=(url,), daemon=True).start()
+        threading.Thread(target=self.check_stream_thread, args=(index, url), daemon=True).start()
 
-    def check_stream_thread(self, url):
+    def check_stream_thread(self, index, url):
         '''Threaded function to check if the stream URL is functional'''
         is_working = self.check_stream(url)
-        self.root.after(0, lambda: self.show_stream_check_result(is_working))
+        self.root.after(0, lambda: self.show_stream_check_result(index, is_working))
 
-    def show_stream_check_result(self, is_working):
+    def show_stream_check_result(self, index, is_working):
         '''Display the result of a stream check on the main UI thread.'''
+        self.statuses[index] = "Working" if is_working else "Not Responding"
+        self.update_treeview()
         if is_working:
             messagebox.showinfo("Stream Check", "The stream is working!")
         else:
@@ -133,12 +237,12 @@ class StreamManagerApp:
 
     def edit_stream(self):
         '''Open a dialog to edit the selected stream'''
-        selected = self.listbox.curselection()
+        selected = self.tree.selection()
         if not selected:
             messagebox.showwarning("No Selection", "Please select a stream to edit.")
             return
 
-        index = selected[0]
+        index = int(selected[0])
         stream = self.streams[index]
         self.open_stream_dialog("Edit Stream", stream, index)
 
@@ -202,21 +306,23 @@ class StreamManagerApp:
             else:
                 self.streams.append(new_stream)  # Add new stream
 
-            self.update_listbox()
+            self.update_treeview()
             dialog.destroy()
 
         tk.Button(dialog, text="Save", command=save_stream).pack(pady=10)
 
     def delete_stream(self):
         '''Delete the selected stream'''
-        selected = self.listbox.curselection()
+        selected = self.tree.selection()
         if not selected:
             messagebox.showwarning("No Selection", "Please select a stream to delete.")
             return
 
-        index = selected[0]
+        index = int(selected[0])
         del self.streams[index]
-        self.update_listbox()
+        self.statuses.pop(index, None)
+        self.statuses = {i if i < index else i - 1: status for i, status in self.statuses.items() if i != index}
+        self.update_treeview()
 
     def save_file(self):
         '''Save the updated streams to a new file'''
@@ -277,6 +383,67 @@ class StreamManagerApp:
 
         self.file_path = save_path
         messagebox.showinfo("Save Successful", "Streams have been saved successfully.")
+        self.save_settings()
+
+    def test_all_streams(self):
+        '''Check all streams with progress updates'''
+        if self.is_testing_all:
+            return
+        if not self.streams:
+            messagebox.showwarning("No Data", "No streams to test.")
+            return
+
+        self.is_testing_all = True
+        self.progress.config(maximum=len(self.streams), value=0)
+        self.status_label.config(text="Testing all streams...")
+        threading.Thread(target=self.test_all_thread, daemon=True).start()
+
+    def test_all_thread(self):
+        for idx, stream in enumerate(self.streams):
+            is_working = self.check_stream(stream['url'])
+            status_text = "Working" if is_working else "Not Responding"
+            self.statuses[idx] = status_text
+            self.root.after(0, lambda i=idx, status=status_text: self.update_status(i, status))
+            self.root.after(0, lambda val=idx + 1: self.progress.config(value=val))
+        self.root.after(0, self.finish_testing)
+
+    def update_status(self, index, status):
+        '''Update status label and treeview row'''
+        self.status_label.config(text=f"Stream {index + 1}: {status}")
+        self.update_treeview()
+
+    def finish_testing(self):
+        self.is_testing_all = False
+        self.status_label.config(text="Testing complete")
+
+    def load_settings(self):
+        '''Restore last used file path and window geometry'''
+        try:
+            with open(self.settings_path, "r") as f:
+                settings = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return
+
+        geometry = settings.get("geometry")
+        if geometry:
+            self.root.geometry(geometry)
+        self.file_path = settings.get("last_file", "")
+
+    def save_settings(self):
+        '''Persist last used file path and window geometry'''
+        settings = {
+            "last_file": self.file_path,
+            "geometry": self.root.winfo_geometry(),
+        }
+        try:
+            with open(self.settings_path, "w") as f:
+                json.dump(settings, f)
+        except OSError:
+            pass
+
+    def on_close(self):
+        self.save_settings()
+        self.root.destroy()
 
 if __name__ == "__main__":
     root = tk.Tk()
